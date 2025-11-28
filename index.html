@@ -1,0 +1,477 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>BRCHD — Demo Shop</title>
+
+  <!-- jsPDF for invoice PDF creation -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <!-- Razorpay checkout script (client-side) -->
+  <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
+
+  <style>
+    :root{
+      --bg:#f3f3f3; --card:#ffffff; --muted:#7b7b7b; --accent:#e53935;
+      --maxw:1100px;
+    }
+    *{box-sizing:border-box}
+    body{
+      margin:0; font-family:Inter,Arial,Helvetica,sans-serif; background:var(--bg); color:#111;
+    }
+
+    /* Header */
+    header{
+      background:#0b0b0b; color:#fff; padding:14px 20px; position:sticky; top:0; z-index:20;
+      display:flex; align-items:center; justify-content:space-between;
+    }
+    header .brand{font-weight:700; letter-spacing:1px;}
+    header .icons { display:flex; gap:18px; align-items:center; font-size:18px; }
+    header .icons button{ background:transparent; color:#fff; border:0; cursor:pointer }
+
+    /* Layout */
+    .container{max-width:var(--maxw); margin:28px auto; padding:0 18px;}
+    .grid{
+      display:grid; grid-template-columns: repeat(2,1fr); gap:20px;
+    }
+    @media (min-width:880px){ .grid{ grid-template-columns: repeat(3,1fr); } }
+    @media (min-width:1200px){ .grid{ grid-template-columns: repeat(4,1fr); } }
+
+    /* Product Card */
+    .card{ background:var(--card); border-radius:8px; padding:10px; box-shadow:0 6px 18px rgba(10,10,10,0.05); overflow:hidden; display:flex; flex-direction:column; }
+    .thumb{ width:100%; height:240px; background:#ddd; border-radius:6px; display:flex; align-items:center; justify-content:center; overflow:hidden; }
+    .thumb img{ width:100%; height:100%; object-fit:cover; display:block; }
+    .meta{ padding:12px 6px; flex:1; display:flex; flex-direction:column; }
+    .title{ font-size:15px; margin:0 0 8px 0; line-height:1.1; color:#222; }
+    .price-row{ display:flex; align-items:center; gap:8px; margin-top:auto; }
+    .old{ text-decoration:line-through; color:var(--muted); font-size:13px; }
+    .price{ font-weight:700; font-size:16px; }
+
+    .discount-badge{ position:absolute; background:var(--accent); color:white; padding:6px 9px; border-radius:4px; font-size:13px; top:10px; left:10px; box-shadow:0 4px 10px rgba(0,0,0,0.15); }
+
+    .cta{ margin-top:10px; display:flex; gap:8px; }
+    .btn{ border:0; padding:10px; border-radius:6px; cursor:pointer; font-weight:600; }
+    .btn-primary{ background:#111; color:white; flex:1; }
+    .btn-outline{ background:transparent; border:1px solid #ddd; flex:.9; }
+
+    /* Cart / Checkout pages */
+    .panel{ background:var(--card); padding:18px; border-radius:8px; box-shadow:0 6px 18px rgba(10,10,10,0.04); }
+    .row{ display:flex; gap:20px; align-items:flex-start; }
+    .col{ flex:1; }
+    .cart-items{ margin-bottom:14px; }
+    .cart-item{ display:flex; gap:12px; padding:10px 0; border-bottom:1px solid #eee; align-items:center; }
+    .cart-item img{ width:72px; height:72px; object-fit:cover; border-radius:6px; }
+    .qty{ display:flex; gap:8px; align-items:center; }
+
+    label{ display:block; margin:8px 0 6px; font-size:13px; color:#333; }
+    input, select, textarea{ width:100%; padding:12px; border:1px solid #e0e0e0; border-radius:6px; font-size:14px; background:white; }
+    .muted{ color:var(--muted); font-size:13px; }
+
+    footer{ padding:30px 0; text-align:center; color:var(--muted); }
+
+    /* small helpers */
+    .hidden{ display:none !important; }
+    .center{ text-align:center; }
+    .flex{ display:flex; align-items:center; gap:8px; }
+    .price-total{ font-size:20px; font-weight:800; }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="brand">BRCHD</div>
+  <div class="icons">
+    <button title="Search">🔍</button>
+    <button id="cartBtn" title="Cart" onclick="openCart()">🛒 <span id="cartCount">0</span></button>
+    <button title="Wishlist">❤</button>
+  </div>
+</header>
+
+<main class="container" id="app">
+  <!-- HOME / PRODUCTS -->
+  <section id="homeSection">
+    <div class="grid" id="productGrid"></div>
+  </section>
+
+  <!-- CART -->
+  <section id="cartSection" class="hidden">
+    <div class="panel">
+      <div class="row">
+        <div class="col">
+          <h2>Cart</h2>
+          <div id="cartList" class="cart-items"></div>
+          <div class="flex">
+            <button class="btn btn-outline" onclick="clearCart()">Clear Cart</button>
+            <button class="btn btn-primary" onclick="goCheckout()">Checkout</button>
+          </div>
+        </div>
+        <div style="width:320px">
+          <div class="panel">
+            <div class="center muted">Order summary</div>
+            <div style="padding:12px 0">
+              <div class="flex" style="justify-content:space-between"><div>Items</div><div id="summaryCount">0</div></div>
+              <div class="flex" style="justify-content:space-between"><div>Subtotal</div><div id="summarySubtotal">₹0</div></div>
+              <div style="height:14px"></div>
+              <div class="flex" style="justify-content:space-between; font-weight:700"><div>Total</div><div class="price-total" id="summaryTotal">₹0</div></div>
+            </div>
+            <div style="margin-top:8px">
+              <button class="btn btn-primary" style="width:100%" onclick="goCheckout()">Proceed to Checkout</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- CHECKOUT -->
+  <section id="checkoutSection" class="hidden">
+    <div class="panel">
+      <h2>Checkout</h2>
+      <div class="row">
+        <div class="col">
+          <label>Email address *</label>
+          <input id="email" type="email" placeholder="you@example.com">
+
+          <h3 style="margin-top:16px">Shipping address</h3>
+          <label>First name *</label>
+          <input id="fname" type="text" placeholder="First name">
+
+          <label>Last name *</label>
+          <input id="lname" type="text" placeholder="Last name">
+
+          <label>Company (optional)</label>
+          <input id="company" type="text" placeholder="Company name">
+
+          <label>Street address *</label>
+          <input id="street" type="text" placeholder="House number and street name">
+          <input id="street2" type="text" placeholder="Apartment, suite, unit (optional)">
+
+          <label>Country / Region *</label>
+          <select id="country"><option>India</option></select>
+
+          <label>Town / City *</label>
+          <input id="city" type="text" placeholder="City">
+
+          <label>State *</label>
+          <input id="state" type="text" placeholder="State">
+
+          <label>Postal / ZIP *</label>
+          <input id="pin" type="text" placeholder="PIN code">
+
+          <label>Phone *</label>
+          <input id="phone" type="tel" placeholder="Phone number" />
+        </div>
+
+        <div style="width:360px">
+          <div class="panel">
+            <div class="center muted">Payment</div>
+            <label>Payment Method</label>
+            <select id="paymentMethod">
+              <option value="razorpay">Razorpay (card/UPI/wallet)</option>
+              <option value="cod">Cash on delivery</option>
+              <option value="offline">Offline / Bank transfer</option>
+            </select>
+
+            <div style="height:12px"></div>
+            <div class="flex" style="justify-content:space-between"><div>Order total</div><div class="price-total" id="checkoutTotal">₹0</div></div>
+
+            <div style="margin-top:12px">
+              <button class="btn btn-primary" style="width:100%" onclick="processPayment()">Pay & Place Order</button>
+            </div>
+
+            <div style="margin-top:12px; font-size:13px" class="muted center">After payment you will get an invoice PDF and the invoice will be sent to the seller (webhook).</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ORDER SUCCESS -->
+  <section id="successSection" class="hidden">
+    <div class="panel center">
+      <h2>Thank you — Order placed</h2>
+      <p id="orderMsg" class="muted"></p>
+      <div style="margin-top:12px">
+        <button class="btn btn-outline" onclick="goHome()">Continue shopping</button>
+        <button class="btn btn-primary" onclick="downloadLastInvoice()">Download Invoice</button>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<footer>
+  © BRCHD — Demo store
+</footer>
+
+<script>
+  // -------------------------
+  // CONFIG — Replace as needed
+  // -------------------------
+  const RAZORPAY_KEY_ID = "RAZORPAY_KEY_ID"; // <-- Replace with your Razorpay key id for real payments
+  const SELLER_WEBHOOK = "https://example.com/webhook-send-invoice"; // <-- Replace with your server webhook to receive order & invoice
+
+  // -------------------------
+  // Demo product data (you can load from your server)
+  // -------------------------
+  const products = [
+    { id: 1, name: "Anger Hyena Sweatshirt – Black Edition", price: 1199, old: 2500, img: "https://i.ibb.co/CnG2bZg/black1.jpg" },
+    { id: 2, name: "Fear of Evils: The Cursed Flame – Black Edition", price: 1199, old: 2500, img: "https://i.ibb.co/0YkHPwN/black2.jpg" },
+    { id: 3, name: "Love Is Forever Sweatshirt – Green Edition", price: 1299, old: 2500, img: "https://i.ibb.co/7bJ4bqD/green1.jpg" },
+    { id: 4, name: "Love Is Forever Sweatshirt – Black Edition", price: 1299, old: 2500, img: "https://i.ibb.co/23zjMBF/black3.jpg" },
+    { id: 5, name: "Maroon Beast Sweatshirt", price: 1099, old: 2499, img: "https://i.ibb.co/9nPqg3y/maroon.jpg" },
+    { id: 6, name: "Royal Blue Sweatshirt", price: 999, old: 2299, img: "https://i.ibb.co/99y7TgK/blue.jpg" }
+  ];
+
+  // -------------------------
+  // App state
+  // -------------------------
+  let cart = JSON.parse(localStorage.getItem('cart_v1') || '[]');
+  let lastOrder = null; // store last order for invoice download
+
+  // -------------------------
+  // Helpers
+  // -------------------------
+  function saveCart(){ localStorage.setItem('cart_v1', JSON.stringify(cart)); updateCartCount(); }
+  function updateCartCount(){ document.getElementById('cartCount').innerText = cart.length; }
+  function currency(x){ return '₹' + x.toLocaleString(); }
+
+  // -------------------------
+  // Render products
+  // -------------------------
+  function renderProducts(){
+    const grid = document.getElementById('productGrid');
+    grid.innerHTML = '';
+    products.forEach(p=>{
+      const el = document.createElement('div');
+      el.className = 'card';
+      el.innerHTML = `
+        <div style="position:relative">
+          <div class="discount-badge">Save ${currency(p.old - p.price)}</div>
+          <div class="thumb"><img src="${p.img}" loading="lazy" alt="${p.name}" /></div>
+        </div>
+        <div class="meta">
+          <h3 class="title">${p.name}</h3>
+          <div class="price-row"><div class="old">₹${p.old}</div><div class="price">${currency(p.price)}</div></div>
+          <div class="cta">
+            <button class="btn btn-primary" onclick="addToCart(${p.id})">Add to cart</button>
+            <button class="btn btn-outline" onclick="openQuick(${p.id})">View</button>
+          </div>
+        </div>
+      `;
+      // clicking image auto-add to cart — per your request "when customer pick the product the product automatically sent to cart"
+      el.querySelector('.thumb').addEventListener('click', ()=> addToCart(p.id));
+      grid.appendChild(el);
+    });
+  }
+
+  // -------------------------
+  // Add to cart
+  // -------------------------
+  function addToCart(productId){
+    const product = products.find(p=>p.id === productId);
+    if(!product) return;
+    // if product exists in cart, increment qty
+    const existing = cart.find(i => i.id === productId);
+    if(existing) existing.qty += 1;
+    else cart.push({ ...product, qty: 1 });
+    saveCart();
+    toast('Added to cart');
+  }
+
+  // -------------------------
+  // Quick view (opens cart for simplicity)
+  // -------------------------
+  function openQuick(productId){
+    const product = products.find(p=>p.id === productId);
+    if(!product) return;
+    // Show a simple alert-like view (kept small)
+    alert(`${product.name}\nPrice: ${currency(product.price)}\nClick image to auto add to cart, or use Add to cart button.`);
+  }
+
+  // -------------------------
+  // Cart UI
+  // -------------------------
+  function openCart(){
+    renderCart();
+    showSection('cartSection');
+  }
+
+  function renderCart(){
+    const list = document.getElementById('cartList');
+    list.innerHTML = '';
+    if(cart.length === 0){ list.innerHTML = '<div class="muted center">Your cart is empty</div>'; updateSummary(); return; }
+
+    cart.forEach((item, idx) => {
+      const div = document.createElement('div');
+      div.className = 'cart-item';
+      div.innerHTML = `
+        <img src="${item.img}" alt="${item.name}">
+        <div style="flex:1">
+          <div style="font-weight:700">${item.name}</div>
+          <div class="muted" style="font-size:13px">Unit: ${currency(item.price)}</div>
+          <div style="margin-top:8px" class="qty">
+            <button onclick="changeQty(${idx}, -1)" class="btn btn-outline">-</button>
+            <div>${item.qty}</div>
+            <button onclick="changeQty(${idx}, 1)" class="btn btn-outline">+</button>
+            <button onclick="removeItem(${idx})" style="margin-left:10px" class="btn btn-outline">Remove</button>
+          </div>
+        </div>
+        <div style="min-width:90px; text-align:right; font-weight:700">${currency(item.price * item.qty)}</div>
+      `;
+      list.appendChild(div);
+    });
+    updateSummary();
+  }
+
+  function changeQty(idx, delta){
+    cart[idx].qty += delta;
+    if(cart[idx].qty <= 0) cart.splice(idx,1);
+    saveCart(); renderCart();
+  }
+  function removeItem(idx){
+    cart.splice(idx,1); saveCart(); renderCart();
+  }
+  function clearCart(){ if(!confirm('Clear cart?')) return; cart = []; saveCart(); renderCart(); toast('Cart cleared'); }
+
+  // -------------------------
+  // Summary & totals
+  // -------------------------
+  function updateSummary(){
+    const count = cart.reduce((s,i)=> s + i.qty, 0);
+    const subtotal = cart.reduce((s,i)=> s + (i.price * i.qty), 0);
+    document.getElementById('summaryCount').innerText = count;
+    document.getElementById('summarySubtotal').innerText = currency(subtotal);
+    document.getElementById('summaryTotal').innerText = currency(subtotal); // fees/shipping omitted
+    document.getElementById('checkoutTotal').innerText = currency(subtotal);
+    document.getElementById('summaryCount') && (document.getElementById('summaryCount').innerText = count);
+    updateCartCount();
+  }
+
+  // -------------------------
+  // Navigation helpers
+  // -------------------------
+  function showSection(id){
+    ['homeSection','cartSection','checkoutSection','successSection'].forEach(s => {
+      const el = document.getElementById(s);
+      if(!el) return;
+      el.classList.toggle('hidden', s !== id);
+    });
+  }
+  function goHome(){ showSection('homeSection'); }
+  function goCheckout(){
+    if(cart.length === 0){ alert('Your cart is empty'); return; }
+    // show checkout with summary
+    fillCheckoutFromProfile(); // optional
+    showSection('checkoutSection');
+  }
+
+  // -------------------------
+  // Checkout validation
+  // -------------------------
+  function validateCheckout(){
+    const email = document.getElementById('email').value.trim();
+    const fname = document.getElementById('fname').value.trim();
+    const lname = document.getElementById('lname').value.trim();
+    const street = document.getElementById('street').value.trim();
+    const city = document.getElementById('city').value.trim();
+    const pin = document.getElementById('pin').value.trim();
+    const phone = document.getElementById('phone').value.trim();
+
+    if(!email || !fname || !lname || !street || !city || !pin || !phone){
+      alert('Please fill all required fields.');
+      return false;
+    }
+    if(!/^\d{6,}$/.test(pin)){ alert('Enter a valid PIN'); return false; }
+    if(!/^\+?\d{7,15}$/.test(phone)){ alert('Enter a valid phone number'); return false; }
+    return true;
+  }
+
+  // -------------------------
+  // Payment flow
+  // -------------------------
+  async function processPayment(){
+    if(!validateCheckout()) return;
+
+    const total = cart.reduce((s,i)=> s + i.price * i.qty, 0);
+    const paymentMethod = document.getElementById('paymentMethod').value;
+
+    // Build order payload to store in lastOrder
+    const order = {
+      id: 'ORD' + Date.now(),
+      created: new Date().toISOString(),
+      items: JSON.parse(JSON.stringify(cart)),
+      subtotal: total,
+      billing: {
+        email: document.getElementById('email').value.trim(),
+        fname: document.getElementById('fname').value.trim(),
+        lname: document.getElementById('lname').value.trim(),
+        company: document.getElementById('company').value.trim(),
+        street: document.getElementById('street').value.trim(),
+        street2: document.getElementById('street2').value.trim(),
+        city: document.getElementById('city').value.trim(),
+        state: document.getElementById('state').value.trim(),
+        pin: document.getElementById('pin').value.trim(),
+        phone: document.getElementById('phone').value.trim()
+      },
+      paymentMethod
+    };
+    // If user selected Razorpay and key exists, open Razorpay checkout
+    if(paymentMethod === 'razorpay' && RAZORPAY_KEY_ID && RAZORPAY_KEY_ID !== 'RAZORPAY_KEY_ID'){
+      try {
+        const options = {
+          key: RAZORPAY_KEY_ID,
+          amount: order.subtotal * 100, // in paise
+          currency: "INR",
+          name: "BRCHD Store",
+          description: `Order ${order.id}`,
+          handler: function (response){
+            // successful payment
+            order.payment = { provider: 'razorpay', id: response.razorpay_payment_id };
+            afterSuccessfulPayment(order);
+          },
+          prefill: { name: order.billing.fname + ' ' + order.billing.lname, email: order.billing.email, contact: order.billing.phone },
+        };
+        const rzp = new Razorpay(options);
+        rzp.open();
+      } catch (err){
+        console.error(err);
+        alert('Payment popup failed, falling back to simulated payment.');
+        order.payment = { provider: 'simulated', id: 'SIM' + Date.now() };
+        afterSuccessfulPayment(order);
+      }
+    } else if(paymentMethod === 'cod' || paymentMethod === 'offline'){
+      // For COD or offline we simply accept the order and mark pending
+      order.payment = { provider: paymentMethod, id: 'PENDING' };
+      afterSuccessfulPayment(order);
+    } else {
+      // Simulated payment (when no Razorpay key)
+      order.payment = { provider: 'simulated', id: 'SIM' + Date.now() };
+      afterSuccessfulPayment(order);
+    }
+  }
+
+  // -------------------------
+  // After payment: store order, invoice PDF, send to seller webhook
+  // -------------------------
+  async function afterSuccessfulPayment(order){
+    // Save lastOrder in localStorage to allow download later
+    lastOrder = order;
+    localStorage.setItem('lastOrder', JSON.stringify(order));
+
+    // Generate invoice PDF
+    const pdfBytes = await generateInvoicePDF(order);
+
+    // Attempt to send invoice to seller via webhook
+    // NOTE: To actually send the file to a server, you need a backend that accepts multipart/form-data or base64.
+    // Here we send order metadata and base64 pdf as JSON to SELLER_WEBHOOK. Replace SELLER_WEBHOOK with real endpoint.
+    try {
+      const base64 = await blobToBase64(pdfBytes);
+      await fetch(SELLER_WEBHOOK, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ order, invoice_base64: base64 })
+      });
+      console.log('Invoice posted to seller webhook (response ignored).');
+    } catch (err){
+      console.warn('Failed to send invoice to seller webhook (this may be expe
